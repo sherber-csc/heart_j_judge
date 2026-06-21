@@ -7,10 +7,13 @@ from ui_suit import (
     build_ui_all_private_chat_recap_lines,
     build_ui_player_private_chat_lines,
     build_ui_private_chat_events,
+    format_mock_personalities,
+    format_suit_symbol,
     get_ui_private_chat_targets,
     initialize_ui_game,
     process_ui_human_private_chat,
     process_ui_mock_private_chat_event,
+    should_show_live_private_chat_records,
     submit_ui_guess,
     submit_ui_public_speech,
 )
@@ -1592,3 +1595,134 @@ def test_ui_private_chat_lines_only_show_human_participating_messages() -> None:
 
     assert any("Player 1 -> Player 2: hello" in line for line in lines)
     assert all("Player 3 -> Player 4: hidden" not in line for line in lines)
+
+
+def test_should_show_live_private_chat_records_before_game_over() -> None:
+    assert should_show_live_private_chat_records("private_chat") is True
+    assert should_show_live_private_chat_records("public_speech") is True
+    assert should_show_live_private_chat_records("guess") is True
+    assert should_show_live_private_chat_records("round_result") is True
+
+
+def test_should_show_live_private_chat_records_after_game_over() -> None:
+    assert should_show_live_private_chat_records("game_over") is False
+
+
+def test_format_mock_personalities_sorts_by_player_id() -> None:
+    formatted = format_mock_personalities({3: "cautious", 2: "deceiver"})
+
+    assert formatted == "Player 2=deceiver, Player 3=cautious"
+
+
+def test_format_mock_personalities_returns_none_for_empty_dict() -> None:
+    assert format_mock_personalities({}) == "None"
+
+
+def test_format_suit_symbol_heart_returns_heart_symbol() -> None:
+    suit_ui = format_suit_symbol("heart")
+
+    assert suit_ui["symbol"] == "♥"
+    assert suit_ui["label"] == "heart"
+    assert suit_ui["color_class"] == "red-suit"
+
+
+def test_format_suit_symbol_diamond_returns_diamond_symbol() -> None:
+    suit_ui = format_suit_symbol("diamond")
+
+    assert suit_ui["symbol"] == "♦"
+    assert suit_ui["label"] == "diamond"
+    assert suit_ui["color_class"] == "red-suit"
+
+
+def test_format_suit_symbol_club_returns_club_symbol() -> None:
+    suit_ui = format_suit_symbol("club")
+
+    assert suit_ui["symbol"] == "♣"
+    assert suit_ui["label"] == "club"
+    assert suit_ui["color_class"] == "black-suit"
+
+
+def test_format_suit_symbol_spade_returns_spade_symbol() -> None:
+    suit_ui = format_suit_symbol("spade")
+
+    assert suit_ui["symbol"] == "♠"
+    assert suit_ui["label"] == "spade"
+    assert suit_ui["color_class"] == "black-suit"
+
+
+def test_format_suit_symbol_question_marks_returns_hidden_suit() -> None:
+    suit_ui = format_suit_symbol("???")
+
+    assert suit_ui["label"] == "???"
+    assert suit_ui["color_class"] == "hidden-suit"
+
+
+def test_format_suit_symbol_hidden_returns_hidden_suit() -> None:
+    suit_ui = format_suit_symbol("hidden")
+
+    assert suit_ui["label"] == "hidden"
+    assert suit_ui["color_class"] == "hidden-suit"
+
+
+def test_format_suit_symbol_none_returns_hidden_suit() -> None:
+    suit_ui = format_suit_symbol(None)
+
+    assert suit_ui["label"] == "hidden"
+    assert suit_ui["color_class"] == "hidden-suit"
+
+
+def test_format_suit_symbol_unknown_string_safely_falls_back_to_hidden() -> None:
+    suit_ui = format_suit_symbol("joker")
+
+    assert suit_ui["label"] == "hidden"
+    assert suit_ui["color_class"] == "hidden-suit"
+
+
+def test_build_player_card_data_still_contains_mock_personality() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    remember_round_suit_assignments(engine)
+    personalities = {2: "deceiver", 3: "cautious", 4: "follower", 5: "honest", 6: "suspicious"}
+
+    cards = build_player_card_data(engine, 1, personalities)
+    mock_card = next(card for card in cards if card["player_id"] == 2)
+
+    assert mock_card["personality"] == "deceiver"
+
+
+def test_game_over_summary_still_has_player_private_history_lines() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    engine.record_private_chat(1, 2, "hello")
+
+    lines = build_ui_player_private_chat_lines(engine, 1)
+
+    assert any("Player 1 -> Player 2: hello" in line for line in lines)
+
+
+def test_game_over_summary_still_has_global_private_chat_recap_lines() -> None:
+    engine = build_suit_engine()
+    assignments = engine.assign_suits_for_round()
+    remember_round_suit_assignments(engine)
+    suit_for_2 = next(
+        assignment.suit for assignment in assignments if assignment.player_id == 2
+    )
+    engine.record_private_chat(1, 2, f"Player 2，你是 {suit_for_2.value}。")
+
+    lines = build_ui_all_private_chat_recap_lines(engine, include_truth_labels=True)
+
+    assert any("[真话]" in line for line in lines)
+
+
+def test_game_over_before_recap_does_not_show_truth_labels() -> None:
+    engine = build_suit_engine()
+    assignments = engine.assign_suits_for_round()
+    remember_round_suit_assignments(engine)
+    suit_for_2 = next(
+        assignment.suit for assignment in assignments if assignment.player_id == 2
+    )
+    engine.record_private_chat(1, 2, f"Player 2，你是 {suit_for_2.value}。")
+
+    lines = build_ui_all_private_chat_recap_lines(engine, include_truth_labels=False)
+
+    assert all("[真话]" not in line and "[假话]" not in line for line in lines)

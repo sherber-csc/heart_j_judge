@@ -378,21 +378,15 @@ def build_player_card_data(
         personality_display = "you" if is_human else personalities.get(player.id, "unknown")
 
         if reveal_all_suits and player.id in assignments_by_id:
-            suit_key = assignments_by_id[player.id]
-            suit_symbol = SUIT_SYMBOLS[suit_key]
-            suit_display = suit_key
+            suit_display = assignments_by_id[player.id]
         elif is_human:
-            suit_key = "unknown"
-            suit_symbol = "🂠"
             suit_display = "???"
         elif human_alive and player.id in alive_player_ids and player.id in assignments_by_id:
-            suit_key = assignments_by_id[player.id]
-            suit_symbol = SUIT_SYMBOLS[suit_key]
-            suit_display = suit_key
+            suit_display = assignments_by_id[player.id]
         else:
-            suit_key = "hidden"
-            suit_symbol = "🂠"
             suit_display = "hidden"
+
+        suit_ui = format_suit_symbol(suit_display)
 
         cards.append(
             {
@@ -402,15 +396,9 @@ def build_player_card_data(
                 "role": role_display,
                 "personality": personality_display,
                 "suit": suit_display,
-                "suit_symbol": suit_symbol,
-                "suit_key": suit_key,
-                "suit_class": (
-                    "red"
-                    if suit_key in RED_SUITS
-                    else "black"
-                    if suit_key in SUIT_SYMBOLS
-                    else "hidden"
-                ),
+                "suit_symbol": suit_ui["symbol"],
+                "suit_label": suit_ui["label"],
+                "suit_class": suit_ui["color_class"],
                 "status": "alive" if player.alive else "dead",
             }
         )
@@ -469,6 +457,46 @@ def get_death_history_lines(death_history: list[dict[str, Any]]) -> list[str]:
         f"Round {entry['round_no']}: dead={entry['dead_player_ids']}"
         for entry in death_history
     ]
+
+
+def should_show_live_private_chat_records(phase: str) -> bool:
+    return phase != "game_over"
+
+
+def format_suit_symbol(suit_value: str | None) -> dict[str, str]:
+    normalized = (suit_value or "hidden").strip().lower()
+    if normalized in RED_SUITS:
+        return {
+            "symbol": SUIT_SYMBOLS[normalized],
+            "label": normalized,
+            "color_class": "red-suit",
+        }
+    if normalized in SUIT_SYMBOLS:
+        return {
+            "symbol": SUIT_SYMBOLS[normalized],
+            "label": normalized,
+            "color_class": "black-suit",
+        }
+    if normalized == "???":
+        return {
+            "symbol": "🂠",
+            "label": "???",
+            "color_class": "hidden-suit",
+        }
+    return {
+        "symbol": "🂠",
+        "label": "hidden",
+        "color_class": "hidden-suit",
+    }
+
+
+def format_mock_personalities(personalities: dict[int, str]) -> str:
+    if not personalities:
+        return "None"
+    return ", ".join(
+        f"Player {player_id}={personality}"
+        for player_id, personality in sorted(personalities.items())
+    )
 
 
 def sync_ui_state_to_session(ui_state: dict[str, Any]) -> None:
@@ -548,13 +576,13 @@ def _render_styles() -> None:
             line-height: 1;
             font-weight: 700;
         }
-        .suit-symbol.red {
+        .suit-symbol.red-suit {
             color: #c1121f;
         }
-        .suit-symbol.black {
+        .suit-symbol.black-suit {
             color: #111827;
         }
-        .suit-symbol.hidden {
+        .suit-symbol.hidden-suit {
             color: #64748b;
         }
         .suit-text {
@@ -615,7 +643,7 @@ def _render_cards(
                     <div class="player-meta">Personality: {card["personality"]}</div>
                     <div class="player-suit">
                         <span class="suit-symbol {card["suit_class"]}">{card["suit_symbol"]}</span>
-                        <span class="suit-text">Suit: {card["suit"]}</span>
+                        <span class="suit-text">Suit: {card["suit_label"]}</span>
                     </div>
                     <div class="status-chip {'dead' if card['status'] == 'dead' else ''}">{card["status"]}</div>
                 </div>
@@ -961,28 +989,18 @@ def render_app() -> None:
     reveal_game_over = st.session_state.phase == "game_over"
 
     st.title("Heart J Judge - Suit Guess Mode")
-    st.markdown(
-        '<div class="prototype-note">CLI 仍然是完整玩法入口。这个页面现在支持最小完整回合流程：私聊、公开发言、猜测、结算、下一轮与 Game Over 复盘。</div>',
-        unsafe_allow_html=True,
-    )
-
     alive_player_ids = [player.id for player in engine.state.players if player.alive]
-    personality_text = ", ".join(
-        f"Player {player_id}={personality}"
-        for player_id, personality in sorted(personalities.items())
-    )
+    personality_text = format_mock_personalities(personalities)
 
-    info_col, debug_col = st.columns([1.1, 1.2])
-    with info_col:
-        st.subheader("当前局信息")
-        st.write(f"当前轮数: {engine.state.round_no}")
-        st.write(f"当前存活玩家: {alive_player_ids}")
-        st.write(f"HUMAN_ROLE 设置: {st.session_state.human_role_setting}")
-        st.write(f"真人身份: {human_player.role.value}")
-        st.write(f"当前阶段: {st.session_state.phase}")
-    with debug_col:
-        st.subheader("Mock personalities")
-        st.write(personality_text or "None")
+    st.subheader("当前局信息")
+    st.write(f"当前轮数: {engine.state.round_no}")
+    st.write(f"当前存活玩家: {alive_player_ids}")
+    st.write(f"HUMAN_ROLE 设置: {st.session_state.human_role_setting}")
+    st.write(f"真人身份: {human_player.role.value}")
+    st.write(f"当前阶段: {st.session_state.phase}")
+
+    with st.expander("调试信息：Mock personalities", expanded=False):
+        st.write(personality_text)
 
     st.subheader("玩家卡片")
     _render_cards(
@@ -993,14 +1011,16 @@ def render_app() -> None:
         reveal_all_suits=reveal_game_over,
     )
 
-    st.subheader("你的私聊记录")
-    for line in build_ui_player_private_chat_lines(
-        engine,
-        st.session_state.human_player_id,
-    )[-8:]:
-        st.write(f"- {line}")
-    if not build_ui_player_private_chat_lines(engine, st.session_state.human_player_id):
-        st.write("- None")
+    if should_show_live_private_chat_records(st.session_state.phase):
+        st.subheader("你的私聊记录")
+        live_chat_lines = build_ui_player_private_chat_lines(
+            engine,
+            st.session_state.human_player_id,
+        )
+        for line in live_chat_lines[-8:]:
+            st.write(f"- {line}")
+        if not live_chat_lines:
+            st.write("- None")
 
     if st.session_state.phase == "private_chat":
         _render_private_chat_phase()
