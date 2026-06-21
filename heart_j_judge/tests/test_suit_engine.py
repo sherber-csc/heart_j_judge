@@ -223,6 +223,21 @@ def test_assign_suits_for_round_only_assigns_alive_players() -> None:
     assert all(assignment.player_id != 1 for assignment in assignments)
 
 
+def test_assign_suits_for_round_can_reroll_within_same_round() -> None:
+    engine = build_suit_engine()
+
+    first_assignments = [
+        (assignment.player_id, assignment.suit.value)
+        for assignment in engine.assign_suits_for_round()
+    ]
+    second_assignments = [
+        (assignment.player_id, assignment.suit.value)
+        for assignment in engine.assign_suits_for_round()
+    ]
+
+    assert first_assignments != second_assignments
+
+
 def test_get_player_view_can_see_other_players_suits() -> None:
     engine = build_suit_engine()
     engine.assign_suits_for_round()

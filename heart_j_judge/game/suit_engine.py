@@ -20,6 +20,12 @@ class SuitGuessEngine:
     def __init__(self, config: GameConfig) -> None:
         self.config = config
         self.state = SuitGameState(debug=config.debug)
+        self._role_rng = random.Random(config.seed)
+        self._suit_rng = (
+            random.Random(f"suits:{config.seed}")
+            if config.seed is not None
+            else random.Random()
+        )
 
     def create_players(self) -> list[Player]:
         role_total = (
@@ -41,8 +47,7 @@ class SuitGuessEngine:
             + [Role.TRAITOR] * traitor_count
             + [Role.PRISONER] * prisoner_count
         )
-        rng = random.Random(self.config.seed)
-        rng.shuffle(roles)
+        self._role_rng.shuffle(roles)
 
         players = [
             Player(
@@ -58,16 +63,11 @@ class SuitGuessEngine:
     def assign_suits_for_round(self) -> list[RoundSuitAssignment]:
         alive_players = [player for player in self.state.players if player.alive]
         suits = list(Suit)
-        rng = (
-            random.Random(f"{self.config.seed}:{self.state.round_no}")
-            if self.config.seed is not None
-            else random.Random()
-        )
         assignments = [
             RoundSuitAssignment(
                 round_no=self.state.round_no,
                 player_id=player.id,
-                suit=rng.choice(suits),
+                suit=self._suit_rng.choice(suits),
             )
             for player in alive_players
         ]
