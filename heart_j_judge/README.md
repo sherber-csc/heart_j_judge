@@ -64,11 +64,11 @@ start_suit_cli.bat
   - prisoners usually tell the truth
   - heart_j lies more often
 
-## Suit Guess Mode UI Prototype
+## Suit Guess Mode Web UI
 
 CLI 仍然是当前的完整玩法入口。
 
-Streamlit UI 目前只是卡片式展示原型，不替代完整 CLI，也不会改变 `SuitGuessEngine` 规则。
+Streamlit UI 现在已经支持最小完整流程，但仍然不改变 `SuitGuessEngine` 规则。
 
 运行方式：
 
@@ -82,7 +82,7 @@ streamlit run ui_suit.py
 start_ui_suit.bat
 ```
 
-当前 UI 原型特性：
+当前 Web UI 特性：
 
 - 侧边栏可选择 `HUMAN_ROLE` 为 `random` / `prisoner` / `heart_j`
 - 支持“开始新游戏”和“重新分配本轮花色”
@@ -90,7 +90,16 @@ start_ui_suit.bat
 - 卡片会显示真正的扑克牌花色符号 `♥ ♦ ♣ ♠`
 - 真人能看到其他存活玩家的花色，但看不到自己的花色
 - 非真人玩家的真实身份在游戏中显示为 `unknown`
-- 当前不会显示私聊真伪、其他玩家之间私聊、或完整回合流程
+- 支持最小完整流程：
+  - 私聊
+  - 公开发言
+  - 猜测
+  - 回合结算
+  - 下一轮
+  - Game Over 复盘
+- 游戏过程中不会显示私聊真伪，也不会显示 Mock 真实身份
+- Game Over 后才会显示全局私聊复盘与真话 / 假话标记
+- 如果你需要更细的调试和对局控制，仍然建议使用 `python main_suit.py`
 
 ### Streamlit Cloud 部署说明
 

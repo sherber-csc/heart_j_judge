@@ -2,7 +2,18 @@ import random
 from io import StringIO
 from contextlib import redirect_stdout
 import main_suit
-from ui_suit import build_player_card_data
+from ui_suit import (
+    build_player_card_data,
+    build_ui_all_private_chat_recap_lines,
+    build_ui_player_private_chat_lines,
+    build_ui_private_chat_events,
+    get_ui_private_chat_targets,
+    initialize_ui_game,
+    process_ui_human_private_chat,
+    process_ui_mock_private_chat_event,
+    submit_ui_guess,
+    submit_ui_public_speech,
+)
 
 from game.models import GameConfig, Suit
 from game.roles import Role
@@ -1346,3 +1357,238 @@ def test_build_player_card_data_does_not_leak_mock_true_role() -> None:
 
     assert mock_card["role"] == "unknown"
     assert mock_card["role"] != mock_player.role.value
+
+
+def test_initialize_ui_game_starts_in_private_chat_phase() -> None:
+    ui_state = initialize_ui_game("random", random.Random(7))
+
+    assert ui_state["phase"] == "private_chat"
+    assert ui_state["human_player_id"] == 1
+    assert ui_state["private_chat_events"]
+
+
+def test_build_ui_private_chat_events_keeps_mock_speaker_binding() -> None:
+    engine = build_suit_engine()
+
+    events = build_ui_private_chat_events(engine, 1, random.Random(7))
+    mock_events = [event for event in events if event["type"] == "mock_turn"]
+
+    assert all("speaker_id" in event for event in mock_events)
+    assert len(mock_events) == 5
+
+
+def test_get_ui_private_chat_targets_excludes_self_dead_and_previous_chat() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    engine.state.players[2].alive = False
+    engine.record_private_chat(1, 2, "hello")
+    engine.record_private_chat(2, 1, "reply")
+
+    targets = get_ui_private_chat_targets(engine, 1)
+
+    assert 1 not in targets
+    assert 2 not in targets
+    assert 3 not in targets
+
+
+def test_process_ui_human_private_chat_records_human_and_mock_reply() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+
+    result = process_ui_human_private_chat(
+        engine,
+        1,
+        2,
+        "我先问你一句",
+        random.Random(7),
+        assign_mock_personalities(engine.state.players, 1, random.Random(8)),
+    )
+
+    assert result["status"] == "sent"
+    assert result["human_chat"].from_player_id == 1
+    assert result["mock_reply"].from_player_id == 2
+
+
+def test_process_ui_human_private_chat_rejects_empty_message() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+
+    result = process_ui_human_private_chat(
+        engine,
+        1,
+        2,
+        "   ",
+        random.Random(7),
+        {},
+    )
+
+    assert result["status"] == "invalid"
+    assert engine.state.private_chat_history == []
+
+
+def test_process_ui_mock_private_chat_event_skips_dead_speaker() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    engine.state.players[1].alive = False
+
+    result = process_ui_mock_private_chat_event(
+        engine,
+        {"type": "mock_turn", "speaker_id": 2},
+        1,
+        random.Random(7),
+        {},
+    )
+
+    assert result["status"] == "skipped"
+    assert result["reason"] == "dead_speaker"
+
+
+def test_process_ui_mock_private_chat_event_returns_human_reply_prompt() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+
+    result = process_ui_mock_private_chat_event(
+        engine,
+        {"type": "mock_turn", "speaker_id": 2},
+        1,
+        SequenceRandom(choice_indices=[0]),
+        {2: "follower"},
+    )
+
+    assert result["status"] == "needs_human_reply"
+    assert result["target_id"] == 1
+    assert "Player 1，你是" in result["message"]
+
+
+def test_process_ui_mock_private_chat_event_hides_mock_to_mock_content() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+
+    result = process_ui_mock_private_chat_event(
+        engine,
+        {"type": "mock_turn", "speaker_id": 2},
+        1,
+        SequenceRandom(choice_indices=[1]),
+        {2: "follower"},
+    )
+
+    assert result["status"] == "hidden"
+    assert result["display_message"] == "其他玩家正在私下交流……"
+    assert "message" not in result
+
+
+def test_submit_ui_public_speech_records_all_alive_players() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    personalities = assign_mock_personalities(engine.state.players, 1, random.Random(8))
+
+    claims = submit_ui_public_speech(
+        engine,
+        1,
+        "我先说一下我的判断。",
+        random.Random(7),
+        personalities,
+    )
+
+    assert len(claims) == 6
+    assert any(claim.speaker_id == 1 for claim in claims)
+    assert {claim.speaker_id for claim in claims} == {1, 2, 3, 4, 5, 6}
+
+
+def test_submit_ui_guess_resolves_deaths() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    personalities = assign_mock_personalities(engine.state.players, 1, random.Random(8))
+    human_assignment = next(
+        assignment
+        for assignment in engine.state.current_suit_assignments
+        if assignment.player_id == 1
+    )
+    wrong_suit = next(suit for suit in Suit if suit is not human_assignment.suit)
+
+    result = submit_ui_guess(
+        engine,
+        1,
+        wrong_suit,
+        random.Random(7),
+        personalities,
+    )
+
+    assert 1 in result["dead_player_ids"]
+    assert engine.state.players[0].alive is False
+
+
+def test_submit_ui_guess_can_reach_game_over_when_winner_exists() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    personalities = assign_mock_personalities(engine.state.players, 1, random.Random(8))
+    human_player = next(player for player in engine.state.players if player.id == 1)
+    human_assignment = next(
+        assignment
+        for assignment in engine.state.current_suit_assignments
+        if assignment.player_id == 1
+    )
+    heart_j_player = next(
+        player for player in engine.state.players if player.role is Role.HEART_J
+    )
+    if heart_j_player.id == 1:
+        for player in engine.state.players:
+            if player.id != 1:
+                player.alive = False
+        guessed_suit = human_assignment.suit
+    else:
+        for player in engine.state.players:
+            if player.id not in {1, heart_j_player.id}:
+                player.alive = False
+        guessed_suit = human_assignment.suit
+
+    result = submit_ui_guess(
+        engine,
+        1,
+        guessed_suit,
+        random.Random(7),
+        personalities,
+    )
+
+    assert result["next_phase"] == "game_over"
+    assert result["winner"] in {"heart_j", "prisoners"}
+
+
+def test_game_over_recap_lines_can_show_truth_labels() -> None:
+    engine = build_suit_engine()
+    assignments = engine.assign_suits_for_round()
+    remember_round_suit_assignments(engine)
+    suit_for_2 = next(
+        assignment.suit for assignment in assignments if assignment.player_id == 2
+    )
+    engine.record_private_chat(1, 2, f"Player 2，你是 {suit_for_2.value}。")
+
+    lines = build_ui_all_private_chat_recap_lines(engine, include_truth_labels=True)
+
+    assert any("[真话]" in line for line in lines)
+
+
+def test_game_over_recap_lines_hide_truth_labels_before_game_over() -> None:
+    engine = build_suit_engine()
+    assignments = engine.assign_suits_for_round()
+    remember_round_suit_assignments(engine)
+    suit_for_2 = next(
+        assignment.suit for assignment in assignments if assignment.player_id == 2
+    )
+    engine.record_private_chat(1, 2, f"Player 2，你是 {suit_for_2.value}。")
+
+    lines = build_ui_all_private_chat_recap_lines(engine, include_truth_labels=False)
+
+    assert all("[真话]" not in line and "[假话]" not in line for line in lines)
+
+
+def test_ui_private_chat_lines_only_show_human_participating_messages() -> None:
+    engine = build_suit_engine()
+    engine.assign_suits_for_round()
+    engine.record_private_chat(1, 2, "hello")
+    engine.record_private_chat(3, 4, "hidden")
+
+    lines = build_ui_player_private_chat_lines(engine, 1)
+
+    assert any("Player 1 -> Player 2: hello" in line for line in lines)
+    assert all("Player 3 -> Player 4: hidden" not in line for line in lines)
